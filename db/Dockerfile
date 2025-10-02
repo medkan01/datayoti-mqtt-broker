@@ -1,5 +1,10 @@
 FROM timescale/timescaledb:latest-pg16
 
+# Désactiver le tuning automatique qui pose problème sur Raspberry Pi
+ENV TIMESCALEDB_TELEMETRY=off
+ENV TS_TUNE_MEMORY=100MB
+ENV TS_TUNE_NUM_CPUS=1
+
 # Copie des scripts d'initialisation
 COPY ./init/ /docker-entrypoint-initdb.d/
 

@@ -24,6 +24,10 @@ services:
       POSTGRES_DB: ${PG_DATABASE}
       MQTT_INGESTOR_PASSWORD: ${MQTT_INGESTOR_PASSWORD}
       GRAFANA_READER_PASSWORD: ${GRAFANA_READER_PASSWORD}
+      # Configuration pour Raspberry Pi
+      TIMESCALEDB_TELEMETRY: off
+      TS_TUNE_MEMORY: 100MB
+      TS_TUNE_NUM_CPUS: 1
     ports:
       - 5432:5432
     volumes:
