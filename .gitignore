@@ -1,0 +1,67 @@
+# Fichiers d'environnement et configuration sensible
+.env
+.env.*
+!.env.example
+
+# Environnements virtuels Python
+.venv/
+venv/
+env/
+ENV/
+
+# Données et logs
+mosquitto/data/
+mosquitto/log/
+mosquitto/passwords/
+*.log
+logs/
+
+# Données de base de données
+*.db
+*.sqlite
+*.sqlite3
+
+# Volumes Docker persistants
+timescale_data/
+grafana_data/
+
+# Données de test et temporaires
+temp/
+tmp/
+*.tmp
+
+# Données CSV et fichiers de données
+*.csv
+data/
+
+# Sauvegardes
+*.bak
+*.backup
+
+# Certificats et clés
+*.pem
+*.key
+*.crt
+*.cert
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg

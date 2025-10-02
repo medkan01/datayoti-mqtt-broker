@@ -1,0 +1,80 @@
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2.0.18
+    container_name: mqtt-broker
+    restart: unless-stopped
+    ports:
+      - 1883:1883
+      - 8883:8883
+      - 9001:9001
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+      - ./mosquitto/passwords:/mosquitto/passwords
+    networks:
+      - mqtt-net
+  postgres:
+    build: ./db
+    container_name: timescale_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PG_USER}
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
+      POSTGRES_DB: ${PG_DATABASE}
+      MQTT_INGESTOR_PASSWORD: ${MQTT_INGESTOR_PASSWORD}
+      GRAFANA_READER_PASSWORD: ${GRAFANA_READER_PASSWORD}
+    ports:
+      - 5432:5432
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+    networks:
+      - mqtt-net
+  
+  ingestor:
+    build: ./ingestor
+    container_name: mqtt-to-pg
+    restart: unless-stopped
+    environment:
+      MQTT_HOST: mosquitto
+      MQTT_PORT: 1883
+      MQTT_USER: ${MQTT_USER}
+      MQTT_PASSWORD: ${MQTT_PASSWORD}
+      PG_HOST: postgres
+      PG_PORT: 5432
+      PG_USER: mqtt_ingestor
+      PG_PASSWORD: ${MQTT_INGESTOR_PASSWORD}
+      PG_DATABASE: ${PG_DATABASE}
+    depends_on:
+      - mosquitto
+      - postgres
+    networks:
+      - mqtt-net
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - 3000:3000
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD}
+      GF_SERVER_ROOT_URL: http://localhost:3000
+      GF_AUTH_ANONYMOUS_ENABLED: true
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - postgres
+    networks:
+      - mqtt-net
+
+networks:
+  mqtt-net:
+    name: mqtt-network
+    driver: bridge
+
+volumes:
+  timescale_data:
+  grafana_data:
