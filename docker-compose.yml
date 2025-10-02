@@ -19,12 +19,12 @@ services:
     container_name: timescale_db
     restart: unless-stopped
     environment:
-      - POSTGRES_USER: ${PG_USER}
-      - POSTGRES_PASSWORD: ${PG_PASSWORD}
-      - POSTGRES_DB: ${PG_DATABASE}
-      - MQTT_INGESTOR_PASSWORD: ${MQTT_INGESTOR_PASSWORD}
-      - GRAFANA_READER_PASSWORD: ${GRAFANA_READER_PASSWORD}
-      - TS_TUNE_MEMORY: "1"
+      POSTGRES_USER: ${PG_USER}
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
+      POSTGRES_DB: ${PG_DATABASE}
+      MQTT_INGESTOR_PASSWORD: ${MQTT_INGESTOR_PASSWORD}
+      GRAFANA_READER_PASSWORD: ${GRAFANA_READER_PASSWORD}
+      TS_TUNE_MEMORY: "1"
     ports:
       - 5432:5432
     volumes:
@@ -37,15 +37,15 @@ services:
     container_name: mqtt-to-pg
     restart: unless-stopped
     environment:
-      - MQTT_HOST: mosquitto
-      - MQTT_PORT: 1883
-      - MQTT_USER: ${MQTT_USER}
-      - MQTT_PASSWORD: ${MQTT_PASSWORD}
-      - PG_HOST: postgres
-      - PG_PORT: 5432
-      - PG_USER: mqtt_ingestor
-      - PG_PASSWORD: ${MQTT_INGESTOR_PASSWORD}
-      - PG_DATABASE: ${PG_DATABASE}
+      MQTT_HOST: mosquitto
+      MQTT_PORT: 1883
+      MQTT_USER: ${MQTT_USER}
+      MQTT_PASSWORD: ${MQTT_PASSWORD}
+      PG_HOST: postgres
+      PG_PORT: 5432
+      PG_USER: mqtt_ingestor
+      PG_PASSWORD: ${MQTT_INGESTOR_PASSWORD}
+      PG_DATABASE: ${PG_DATABASE}
     depends_on:
       - mosquitto
       - postgres
@@ -59,11 +59,11 @@ services:
     ports:
       - 3000:3000
     environment:
-      - GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER}
-      - GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD}
-      - GF_SERVER_ROOT_URL: http://localhost:3000
-      - GF_AUTH_ANONYMOUS_ENABLED: true
-      - GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD}
+      GF_SERVER_ROOT_URL: http://localhost:3000
+      GF_AUTH_ANONYMOUS_ENABLED: true
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
     volumes:
       - grafana_data:/var/lib/grafana
     depends_on:
