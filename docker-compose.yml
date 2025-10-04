@@ -24,6 +24,9 @@ services:
       POSTGRES_DB: ${PG_DATABASE}
       MQTT_INGESTOR_PASSWORD: ${MQTT_INGESTOR_PASSWORD}
       GRAFANA_READER_PASSWORD: ${GRAFANA_READER_PASSWORD}
+      # Configuration UTC explicite pour éviter les problèmes de fuseau horaire (Grafana se chargera de l'affichage local)
+      TZ: UTC
+      PGTZ: UTC
       # Configuration pour Raspberry Pi
       TIMESCALEDB_TELEMETRY: off
       TS_TUNE_MEMORY: 100MB
@@ -49,6 +52,8 @@ services:
       PG_USER: mqtt_ingestor
       PG_PASSWORD: ${MQTT_INGESTOR_PASSWORD}
       PG_DATABASE: ${PG_DATABASE}
+      # Configuration UTC explicite (même raison que pour Postgres)
+      TZ: UTC
     depends_on:
       - mosquitto
       - postgres

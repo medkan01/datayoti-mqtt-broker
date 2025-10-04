@@ -13,16 +13,35 @@
 CREATE EXTENSION IF NOT EXISTS timescaledb;
 
 -- =============================================================================
+-- CONFIGURATION UTC
+-- =============================================================================
+-- Forcer le fuseau horaire à UTC pour toute la base de données
+-- Ceci garantit que toutes les opérations temporelles sont en UTC
+SET timezone = 'UTC';
+ALTER DATABASE datayoti_db SET timezone = 'UTC';
+
+-- Message de confirmation de la configuration UTC
+DO $$
+BEGIN
+    RAISE NOTICE 'Base de données configurée en UTC : %', current_setting('timezone');
+END
+$$;
+
+-- =============================================================================
 -- TABLE DES SITES
 -- =============================================================================
 -- Table de référence pour stocker les informations des sites
 CREATE TABLE IF NOT EXISTS sites (
-    site_id VARCHAR(50) PRIMARY KEY,
+    id SERIAL PRIMARY KEY,                   -- ID auto-incrémenté
+    site_id VARCHAR(50) UNIQUE NOT NULL,     -- Identifiant unique du site
     site_name VARCHAR(255),
     description TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- Index sur site_id pour les recherches rapides
+CREATE INDEX IF NOT EXISTS idx_sites_site_id ON sites(site_id);
 
 -- Insérer quelques sites par défaut basés sur les données existantes
 INSERT INTO sites (site_id, site_name, description) VALUES 
@@ -35,32 +54,42 @@ ON CONFLICT (site_id) DO NOTHING;
 -- =============================================================================
 -- TABLE DES CAPTEURS
 -- =============================================================================
--- Table de référence pour stocker les informations des capteurs
+-- Table de référence pour stocker les informations minimales des capteurs
+-- Structure simplifiée : seules les informations essentielles sont conservées
 CREATE TABLE IF NOT EXISTS devices (
-    device_id VARCHAR(17) PRIMARY KEY,  -- Format MAC address: XX:XX:XX:XX:XX:XX
-    site_id VARCHAR(50) REFERENCES sites(site_id),
-    device_name VARCHAR(255),
-    device_type VARCHAR(50) DEFAULT 'temperature_humidity',
-    is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    id SERIAL PRIMARY KEY,                   -- ID auto-incrémenté pour référence interne
+    device_id VARCHAR(17) UNIQUE NOT NULL,   -- Format MAC address: XX:XX:XX:XX:XX:XX
+    site_id VARCHAR(50) REFERENCES sites(site_id), -- Référence vers le site d'installation
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), -- Date de création de l'entrée
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()  -- Date de dernière modification
 );
+
+-- Index sur device_id pour les recherches rapides
+CREATE INDEX IF NOT EXISTS idx_devices_device_id ON devices(device_id);
+CREATE INDEX IF NOT EXISTS idx_devices_site_id ON devices(site_id);
+
+-- Insérer quelques devices de test basés sur les données existantes
+INSERT INTO devices (device_id, site_id) VALUES
+    ('1C:69:20:E9:18:24', 'SITE_001'),
+    ('88:13:BF:08:04:A4', 'SITE_004'),
+    ('1C:69:20:30:24:94', 'SITE_002')
+ON CONFLICT (device_id) DO NOTHING;
 
 -- =============================================================================
 -- TABLE PRINCIPALE DES DONNÉES DES CAPTEURS (HYPERTABLE)
 -- =============================================================================
--- Table principale pour stocker toutes les mesures des capteurs (les unités de mesures sont fixes donc pas besoin de les stocker)
+-- Table principale pour stocker toutes les mesures des capteurs
+-- Les unités sont fixes : température en °C, humidité en %
+-- Le site_id est volontairement absent car non envoyé par les capteurs ESP32
 CREATE TABLE IF NOT EXISTS sensor_data (
-    time TIMESTAMP WITH TIME ZONE NOT NULL,  -- Timestamp du capteur
+    time TIMESTAMP WITH TIME ZONE NOT NULL,  -- Timestamp du capteur (UTC)
     device_id VARCHAR(17) NOT NULL,          -- ID du device (MAC address)
-    site_id VARCHAR(50) NOT NULL,            -- ID du site
-    temperature REAL,                        -- Température mesurée
-    humidity REAL,                           -- Humidité mesurée
-    reception_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(), -- Timestamp de réception
+    temperature REAL,                        -- Température mesurée en °C
+    humidity REAL,                           -- Humidité mesurée en %
+    reception_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(), -- Timestamp de réception (UTC)
 
     -- Contraintes
-    FOREIGN KEY (device_id) REFERENCES devices(device_id),
-    FOREIGN KEY (site_id) REFERENCES sites(site_id)
+    FOREIGN KEY (device_id) REFERENCES devices(device_id)
 );
 
 -- Créer l'hypertable avec partitionnement par temps (1 jour par chunk)
@@ -78,15 +107,18 @@ $$;
 -- =============================================================================
 -- TABLE DES HEARTBEATS
 -- =============================================================================
--- Table pour stocker les heartbeats des capteurs
+-- Table pour stocker les heartbeats des capteurs ESP32
+-- Contient les informations de santé et de connectivité des capteurs
 CREATE TABLE IF NOT EXISTS device_heartbeats (
-    time TIMESTAMP WITH TIME ZONE NOT NULL,  -- Timestamp du heartbeat
-    device_id VARCHAR(17) NOT NULL,          -- ID du device
-    site_id VARCHAR(50) NOT NULL,            -- ID du site
-    status VARCHAR(20) DEFAULT 'online',     -- Statut du device
-    rssi INTEGER,                            -- Force du signal WiFi
-    free_heap INTEGER,                       -- Mémoire libre
-    reception_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    time TIMESTAMP WITH TIME ZONE NOT NULL,  -- Timestamp du heartbeat (UTC)
+    device_id VARCHAR(17) NOT NULL,          -- ID du device (MAC address)
+    site_id VARCHAR(50) NOT NULL,            -- ID du site (fourni par ESP32)
+    rssi INTEGER,                            -- Force du signal WiFi en dBm
+    free_heap INTEGER,                       -- Mémoire libre actuelle en bytes
+    uptime INTEGER,                          -- Temps de fonctionnement en secondes
+    min_heap INTEGER,                        -- Mémoire libre minimale atteinte en bytes
+    ntp_sync BOOLEAN,                        -- Statut de synchronisation NTP (true/false)
+    reception_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(), -- Timestamp de réception (UTC)
     
     -- Contraintes
     FOREIGN KEY (device_id) REFERENCES devices(device_id),
@@ -106,156 +138,25 @@ END
 $$;
 
 -- =============================================================================
--- TABLE DES STATUTS DES DEVICES
--- =============================================================================
--- Table pour stocker les messages de statut des capteurs
-CREATE TABLE IF NOT EXISTS device_status (
-    time TIMESTAMP WITH TIME ZONE NOT NULL,  -- Timestamp du message
-    device_id VARCHAR(17) NOT NULL,          -- ID du device
-    site_id VARCHAR(50) NOT NULL,            -- ID du site
-    status_type VARCHAR(50),                 -- Type de statut
-    status_data JSONB,                       -- Données de statut (format JSON)
-    reception_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    
-    -- Contraintes
-    FOREIGN KEY (device_id) REFERENCES devices(device_id),
-    FOREIGN KEY (site_id) REFERENCES sites(site_id)
-);
-
--- Créer l'hypertable pour les statuts (1 jour par chunk)
-SELECT create_hypertable('device_status', 'time', if_not_exists => TRUE, chunk_time_interval => INTERVAL '1 day');
-
--- Ajouter une contrainte unique pour les statuts
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'device_status_uniq') THEN
-        ALTER TABLE device_status ADD CONSTRAINT device_status_uniq UNIQUE (device_id, time, status_type);
-    END IF;
-END
-$$;
-
--- =============================================================================
 -- INDEX POUR OPTIMISER LES PERFORMANCES
 -- =============================================================================
 
--- Index sur device_id pour les requêtes par capteur
+-- Index sur device_id pour les requêtes par capteur (avec tri temporel descendant)
 CREATE INDEX IF NOT EXISTS idx_sensor_data_device_id ON sensor_data (device_id, time DESC);
 CREATE INDEX IF NOT EXISTS idx_heartbeats_device_id ON device_heartbeats (device_id, time DESC);
-CREATE INDEX IF NOT EXISTS idx_status_device_id ON device_status (device_id, time DESC);
 
--- Index sur site_id pour les requêtes par site
-CREATE INDEX IF NOT EXISTS idx_sensor_data_site_id ON sensor_data (site_id, time DESC);
+-- Index sur site_id pour les requêtes par site (seulement pour les tables qui contiennent site_id)
+-- Note: sensor_data n'a pas de site_id car non fourni par les capteurs ESP32
 CREATE INDEX IF NOT EXISTS idx_heartbeats_site_id ON device_heartbeats (site_id, time DESC);
-CREATE INDEX IF NOT EXISTS idx_status_site_id ON device_status (site_id, time DESC);
-
--- =============================================================================
--- VUES UTILES POUR L'ANALYSE
--- =============================================================================
-
--- Vue pour les dernières mesures de chaque capteur
-CREATE OR REPLACE VIEW latest_sensor_readings AS
-SELECT DISTINCT ON (device_id)
-    device_id,
-    site_id,
-    time,
-    temperature,
-    humidity,
-    reception_time
-FROM sensor_data
-ORDER BY device_id, time DESC;
-
--- Vue pour le statut des capteurs (derniers heartbeats)
-CREATE OR REPLACE VIEW device_health AS
-SELECT DISTINCT ON (device_id)
-    device_id,
-    site_id,
-    time as last_heartbeat,
-    status,
-    rssi,
-    free_heap,
-    CASE 
-        WHEN time > NOW() - INTERVAL '5 minutes' THEN 'online'
-        WHEN time > NOW() - INTERVAL '30 minutes' THEN 'warning'
-        ELSE 'offline'
-    END as health_status
-FROM device_heartbeats
-ORDER BY device_id, time DESC;
-
--- Vue pour les statistiques quotidiennes par capteur
-CREATE OR REPLACE VIEW daily_sensor_stats AS
-SELECT 
-    device_id,
-    site_id,
-    date_trunc('day', time) as day,
-    COUNT(temperature) as measurement_count,
-    AVG(temperature) as avg_temperature,
-    MIN(temperature) as min_temperature,
-    MAX(temperature) as max_temperature,
-    AVG(humidity) as avg_humidity,
-    MIN(humidity) as min_humidity,
-    MAX(humidity) as max_humidity
-FROM sensor_data
-GROUP BY device_id, site_id, date_trunc('day', time)
-ORDER BY day DESC, device_id;
 
 -- =============================================================================
 -- POLITIQUES DE RÉTENTION DES DONNÉES
 -- =============================================================================
 
--- Politique de rétention : garder les données détaillées pendant 1 an
-SELECT add_retention_policy('sensor_data', INTERVAL '1 year');
-SELECT add_retention_policy('device_heartbeats', INTERVAL '6 months');
-SELECT add_retention_policy('device_status', INTERVAL '3 months');
-
--- =============================================================================
--- AGRÉGATIONS CONTINUES POUR LES PERFORMANCES
--- =============================================================================
-
--- Agrégation continue pour les moyennes horaires
-CREATE MATERIALIZED VIEW IF NOT EXISTS sensor_data_hourly
-WITH (timescaledb.continuous) AS
-SELECT 
-    time_bucket('1 hour', time) AS bucket,
-    device_id,
-    site_id,
-    AVG(temperature) as avg_temperature,
-    MIN(temperature) as min_temperature,
-    MAX(temperature) as max_temperature,
-    AVG(humidity) as avg_humidity,
-    MIN(humidity) as min_humidity,
-    MAX(humidity) as max_humidity,
-    COUNT(*) as measurement_count
-FROM sensor_data
-GROUP BY bucket, device_id, site_id;
-
--- Politique de rafraîchissement pour l'agrégation horaire
-SELECT add_continuous_aggregate_policy('sensor_data_hourly',
-    start_offset => INTERVAL '7 days',
-    end_offset => INTERVAL '0',
-    schedule_interval => INTERVAL '5 minutes');
-
--- Agrégation continue pour les moyennes quotidiennes
-CREATE MATERIALIZED VIEW IF NOT EXISTS sensor_data_daily
-WITH (timescaledb.continuous) AS
-SELECT 
-    time_bucket('1 day', time) AS bucket,
-    device_id,
-    site_id,
-    AVG(temperature) as avg_temperature,
-    MIN(temperature) as min_temperature,
-    MAX(temperature) as max_temperature,
-    AVG(humidity) as avg_humidity,
-    MIN(humidity) as min_humidity,
-    MAX(humidity) as max_humidity,
-    COUNT(*) as measurement_count
-FROM sensor_data
-GROUP BY bucket, device_id, site_id;
-
--- Politique de rafraîchissement pour l'agrégation quotidienne
-SELECT add_continuous_aggregate_policy('sensor_data_daily',
-    start_offset => INTERVAL '30 days',
-    end_offset => INTERVAL '0',
-    schedule_interval => INTERVAL '1 hour');
+-- Politique de rétention pour optimiser l'espace disque et les performances
+-- Les données anciennes sont automatiquement supprimées par TimescaleDB
+SELECT add_retention_policy('sensor_data', INTERVAL '1 year');        -- Données capteurs : 1 an
+SELECT add_retention_policy('device_heartbeats', INTERVAL '6 months'); -- Heartbeats : 6 mois
 
 -- =============================================================================
 -- PERMISSIONS ET SÉCURITÉ
@@ -298,18 +199,7 @@ $$;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO grafana_reader;
 GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO grafana_reader;
 GRANT USAGE ON SCHEMA public TO grafana_reader;
-GRANT SELECT ON sensor_data_hourly, sensor_data_daily TO grafana_reader;
-
--- =============================================================================
--- DONNÉES DE TEST (OPTIONNEL)
--- =============================================================================
-
--- Insérer quelques devices de test basés sur les données existantes
-INSERT INTO devices (device_id, site_id, device_name, device_type) VALUES 
-    ('1C:69:20:E9:18:24', 'SITE_001', 'Capteur Salon Principal', 'temperature_humidity'),
-    ('88:13:BF:08:04:A4', 'SITE_004', 'Capteur Site 4', 'temperature_humidity'),
-    ('1C:69:20:30:24:94', 'SITE_002', 'Capteur Site 2', 'temperature_humidity')
-ON CONFLICT (device_id) DO NOTHING;
+-- Note: Les permissions pour les vues matérialisées sont maintenant dans 03_create_views.sql
 
 -- =============================================================================
 -- MESSAGES DE CONFIRMATION
@@ -320,27 +210,33 @@ BEGIN
     RAISE NOTICE '=============================================================================';
     RAISE NOTICE 'DATAYOTI - INITIALISATION DE LA BASE DE DONNÉES TERMINÉE';
     RAISE NOTICE '=============================================================================';
-    RAISE NOTICE 'Tables créées:';
-    RAISE NOTICE '  ✓ sites - Informations des sites';
-    RAISE NOTICE '  ✓ devices - Informations des capteurs';
-    RAISE NOTICE '  ✓ sensor_data - Données des capteurs (hypertable)';
-    RAISE NOTICE '  ✓ device_heartbeats - Heartbeats des capteurs (hypertable)';
-    RAISE NOTICE '  ✓ device_status - Statuts des capteurs (hypertable)';
+    RAISE NOTICE 'Structure finale:';
+    RAISE NOTICE '  ✓ sites (id, site_id, site_name, description)';
+    RAISE NOTICE '  ✓ devices (id, device_id, site_id) - Structure simplifiée';
+    RAISE NOTICE '  ✓ sensor_data (time, device_id, temperature, humidity) - Hypertable';
+    RAISE NOTICE '  ✓ device_heartbeats (time, device_id, site_id, rssi, free_heap, uptime, min_heap, ntp_sync) - Hypertable';
     RAISE NOTICE '';
-    RAISE NOTICE 'Vues créées:';
-    RAISE NOTICE '  ✓ latest_sensor_readings - Dernières mesures';
-    RAISE NOTICE '  ✓ device_health - Statut des capteurs';
-    RAISE NOTICE '  ✓ daily_sensor_stats - Statistiques quotidiennes';
+    RAISE NOTICE 'Topics MQTT supportés:';
+    RAISE NOTICE '  📡 datayoti/sensor/{device_id}/data → sensor_data';
+    RAISE NOTICE '  💓 datayoti/sensor/{device_id}/heartbeat → device_heartbeats';
     RAISE NOTICE '';
-    RAISE NOTICE 'Agrégations continues:';
-    RAISE NOTICE '  ✓ sensor_data_hourly - Moyennes horaires';
-    RAISE NOTICE '  ✓ sensor_data_daily - Moyennes quotidiennes';
+    RAISE NOTICE 'Configuration:';
+    RAISE NOTICE '  🕐 Timezone: UTC pour toutes les opérations temporelles';
+    RAISE NOTICE '  🗂️  Rétention: sensor_data (1 an), heartbeats (6 mois)';
+    RAISE NOTICE '  📊 Partitionnement: 1 jour par chunk TimescaleDB';
     RAISE NOTICE '';
     RAISE NOTICE 'Utilisateurs créés:';
-    RAISE NOTICE '  ✓ mqtt_ingestor - Pour l''application d''ingestion';
-    RAISE NOTICE '  ✓ grafana_reader - Pour Grafana (lecture seule)';
+    RAISE NOTICE '  👤 mqtt_ingestor - Ingestion des données MQTT';
+    RAISE NOTICE '  👤 grafana_reader - Lecture pour Grafana (lecture seule)';
     RAISE NOTICE '';
-    RAISE NOTICE 'Base de données prête pour l''ingestion des données MQTT!';
+    RAISE NOTICE 'IMPORTANT: Vues séparées dans 03_create_views.sql';
+    RAISE NOTICE '  📊 latest_sensor_readings - Dernières mesures';
+    RAISE NOTICE '  💓 device_health - Statut des capteurs';
+    RAISE NOTICE '  📈 semi_hourly_sensor_stats - Agrégations 30min';
+    RAISE NOTICE '  📊 sensor_data_hourly - Agrégations horaires';
+    RAISE NOTICE 'Exécutez: .\manage_views.ps1 -Action create';
+    RAISE NOTICE '';
+    RAISE NOTICE '🚀 Base de données prête pour l''ingestion des données ESP32!';
     RAISE NOTICE '=============================================================================';
 END
 $$;

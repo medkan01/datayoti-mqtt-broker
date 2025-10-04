@@ -13,7 +13,7 @@ import os
 import time
 import logging
 import psycopg2
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 import paho.mqtt.client as mqtt
 from paho.mqtt.enums import CallbackAPIVersion
@@ -50,7 +50,6 @@ if missing_vars:
 TOPICS = [
     "datayoti/sensor/+/data",
     "datayoti/sensor/+/heartbeat",
-    "datayoti/sensor/+/status",
 ]
 
 # Configuration du logging
@@ -126,22 +125,23 @@ class DatabaseManager:
             logger.error(f"❌ Erreur lors de la création device/site : {e}")
             raise
     
-    def insert_sensor_data(self, device_id: str, site_id: str, temperature: float, 
+    def insert_sensor_data(self, device_id: str, temperature: float, 
                           humidity: float, sensor_timestamp: str):
         """Insert les données de capteur dans la table sensor_data"""
         try:
-            # S'assurer que le device existe
+            # S'assurer que le device existe (récupération automatique du site_id)
+            site_id = self.get_device_site_id(device_id) or "UNKNOWN"
             self.ensure_device_exists(device_id, site_id)
             
             with self.connection.cursor() as cursor:
                 cursor.execute("""
-                    INSERT INTO sensor_data (time, device_id, site_id, temperature, humidity, reception_time)
-                    VALUES (%s, %s, %s, %s, %s, NOW())
+                    INSERT INTO sensor_data (time, device_id, temperature, humidity, reception_time)
+                    VALUES (%s, %s, %s, %s, NOW())
                     ON CONFLICT (device_id, time) DO UPDATE SET
                         temperature = EXCLUDED.temperature,
                         humidity = EXCLUDED.humidity,
                         reception_time = EXCLUDED.reception_time
-                """, (sensor_timestamp, device_id, site_id, temperature, humidity))
+                """, (sensor_timestamp, device_id, temperature, humidity))
                 
                 logger.info(f"✅ Données insérées pour {device_id} : T={temperature}°C, H={humidity}%")
                 
@@ -150,8 +150,9 @@ class DatabaseManager:
             # Reconnection en cas d'erreur
             self.connect()
     
-    def insert_heartbeat(self, device_id: str, site_id: str, status: str, 
-                        rssi: int, free_heap: int, timestamp: str):
+    def insert_heartbeat(self, device_id: str, site_id: str, 
+                        rssi: int, free_heap: int, uptime: int, min_heap: int, 
+                        ntp_sync: bool, timestamp: str):
         """Insert les données de heartbeat dans la table device_heartbeats"""
         try:
             # S'assurer que le device existe
@@ -159,42 +160,22 @@ class DatabaseManager:
             
             with self.connection.cursor() as cursor:
                 cursor.execute("""
-                    INSERT INTO device_heartbeats (time, device_id, site_id, status, rssi, free_heap, reception_time)
-                    VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                    INSERT INTO device_heartbeats (time, device_id, site_id, rssi, free_heap, uptime, min_heap, ntp_sync, reception_time)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
                     ON CONFLICT (device_id, time) DO UPDATE SET
-                        status = EXCLUDED.status,
+                        site_id = EXCLUDED.site_id,
                         rssi = EXCLUDED.rssi,
                         free_heap = EXCLUDED.free_heap,
+                        uptime = EXCLUDED.uptime,
+                        min_heap = EXCLUDED.min_heap,
+                        ntp_sync = EXCLUDED.ntp_sync,
                         reception_time = EXCLUDED.reception_time
-                """, (timestamp, device_id, site_id, status, rssi, free_heap))
+                """, (timestamp, device_id, site_id, rssi, free_heap, uptime, min_heap, ntp_sync))
                 
-                logger.info(f"💓 Heartbeat inséré pour {device_id} : {status}, RSSI={rssi}dBm")
+                logger.info(f"💓 Heartbeat inséré pour {device_id} : RSSI={rssi}dBm, Uptime={uptime}s, NTP={ntp_sync}")
                 
         except Exception as e:
             logger.error(f"❌ Erreur insertion heartbeat : {e}")
-            # Reconnection en cas d'erreur
-            self.connect()
-    
-    def insert_status(self, device_id: str, site_id: str, status_type: str, 
-                     status_data: Dict[str, Any], timestamp: str):
-        """Insert les données de statut dans la table device_status"""
-        try:
-            # S'assurer que le device existe
-            self.ensure_device_exists(device_id, site_id)
-            
-            with self.connection.cursor() as cursor:
-                cursor.execute("""
-                    INSERT INTO device_status (time, device_id, site_id, status_type, status_data, reception_time)
-                    VALUES (%s, %s, %s, %s, %s, NOW())
-                    ON CONFLICT (device_id, time, status_type) DO UPDATE SET
-                        status_data = EXCLUDED.status_data,
-                        reception_time = EXCLUDED.reception_time
-                """, (timestamp, device_id, site_id, status_type, json.dumps(status_data)))
-                
-                logger.info(f"📊 Statut inséré pour {device_id} : {status_type}")
-                
-        except Exception as e:
-            logger.error(f"❌ Erreur insertion status : {e}")
             # Reconnection en cas d'erreur
             self.connect()
 
@@ -239,7 +220,6 @@ class MQTTIngestor:
         """Traite les messages de données des capteurs"""
         try:
             device_id = payload.get("device_id")
-            site_id = payload.get("site_id", "UNKNOWN")
             temperature = payload.get("temperature")
             humidity = payload.get("humidity")
             sensor_timestamp = payload.get("timestamp")
@@ -250,13 +230,15 @@ class MQTTIngestor:
             
             # Conversion du timestamp
             if sensor_timestamp == "1970-01-01 01:00:02":
-                # Timestamp invalide, utiliser le timestamp de réception
-                sensor_timestamp = datetime.now().isoformat()
+                # Timestamp invalide, utiliser le timestamp de réception UTC
+                sensor_timestamp = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
             
-            # Insertion en base
+            # Validation et normalisation du format ISO8601 UTC
+            sensor_timestamp = self.normalize_timestamp_utc(sensor_timestamp)
+            
+            # Insertion en base (site_id récupéré automatiquement)
             self.db.insert_sensor_data(
                 device_id=device_id,
-                site_id=site_id,
                 temperature=float(temperature),
                 humidity=float(humidity),
                 sensor_timestamp=sensor_timestamp
@@ -265,27 +247,86 @@ class MQTTIngestor:
         except Exception as e:
             logger.error(f"❌ Erreur traitement message data : {e}")
     
+    def get_device_site_id(self, device_id: str) -> Optional[str]:
+        """Récupère le site_id d'un device depuis la base de données"""
+        try:
+            with self.db.connection.cursor() as cursor:
+                cursor.execute("SELECT site_id FROM devices WHERE device_id = %s", (device_id,))
+                result = cursor.fetchone()
+                return result[0] if result else None
+        except Exception as e:
+            logger.warning(f"⚠️ Impossible de récupérer le site_id pour {device_id}: {e}")
+            return None
+    
+    def normalize_timestamp_utc(self, timestamp_str: str) -> str:
+        """
+        Normalise un timestamp au format ISO8601 UTC
+        Accepte plusieurs formats et les convertit tous en UTC avec suffix Z
+        """
+        try:
+            # Si déjà au bon format avec Z, retourner tel quel
+            if timestamp_str.endswith('Z'):
+                return timestamp_str
+            
+            # Si format avec +00:00, remplacer par Z
+            if timestamp_str.endswith('+00:00'):
+                return timestamp_str.replace('+00:00', 'Z')
+            
+            # Si pas de timezone, considérer comme UTC et ajouter Z
+            if 'T' in timestamp_str and not any(tz in timestamp_str for tz in ['+', '-', 'Z']):
+                return timestamp_str + 'Z'
+            
+            # Pour autres formats, essayer de parser et convertir en UTC
+            try:
+                # Essayer de parser le timestamp
+                if '+' in timestamp_str or timestamp_str.endswith('Z'):
+                    dt = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                else:
+                    # Assumer UTC si pas de timezone
+                    dt = datetime.fromisoformat(timestamp_str).replace(tzinfo=timezone.utc)
+                
+                # Convertir en UTC et formater
+                dt_utc = dt.astimezone(timezone.utc)
+                return dt_utc.isoformat().replace('+00:00', 'Z')
+                
+            except ValueError:
+                logger.warning(f"⚠️ Format de timestamp non reconnu : {timestamp_str}")
+                # Fallback : timestamp actuel UTC
+                return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+                
+        except Exception as e:
+            logger.error(f"❌ Erreur normalisation timestamp : {e}")
+            # Fallback : timestamp actuel UTC
+            return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+    
     def handle_heartbeat_message(self, payload: Dict[str, Any]):
         """Traite les messages de heartbeat des capteurs"""
         try:
             device_id = payload.get("device_id")
             site_id = payload.get("site_id", "UNKNOWN")
-            status = payload.get("status", "unknown")
             rssi = payload.get("rssi")
             free_heap = payload.get("free_heap")
-            timestamp = payload.get("timestamp", datetime.now().isoformat())
+            uptime = payload.get("uptime")
+            min_heap = payload.get("min_heap")
+            ntp_sync = payload.get("ntp_sync", False)
+            timestamp = payload.get("timestamp", datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'))
             
             # Validation des données
             if not device_id:
                 raise ValueError("device_id manquant dans le heartbeat")
             
+            # Normaliser le timestamp UTC
+            timestamp = self.normalize_timestamp_utc(timestamp)
+            
             # Insertion en base
             self.db.insert_heartbeat(
                 device_id=device_id,
                 site_id=site_id,
-                status=status,
                 rssi=rssi if rssi is not None else -999,
                 free_heap=free_heap if free_heap is not None else 0,
+                uptime=uptime if uptime is not None else 0,
+                min_heap=min_heap if min_heap is not None else 0,
+                ntp_sync=ntp_sync,
                 timestamp=timestamp
             )
             
@@ -297,24 +338,17 @@ class MQTTIngestor:
         try:
             device_id = payload.get("device_id")
             site_id = payload.get("site_id", "UNKNOWN")
-            timestamp = payload.get("timestamp", datetime.now().isoformat())
+            timestamp = payload.get("timestamp", datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'))
             
             # Validation des données
             if not device_id:
                 raise ValueError("device_id manquant dans le message status")
             
-            # Insertion en base
-            self.db.insert_status(
-                device_id=device_id,
-                site_id=site_id,
-                status_type="general",
-                status_data=payload,
-                timestamp=timestamp
-            )
-            
+            # Normaliser le timestamp UTC
+            timestamp = self.normalize_timestamp_utc(timestamp)
         except Exception as e:
-            logger.error(f"❌ Erreur traitement status : {e}")
-    
+            logger.error(f"❌ Erreur traitement heartbeat : {e}")
+
     def on_message(self, client, userdata, message):
         """Traite tous les messages MQTT reçus"""
         try:
@@ -326,7 +360,7 @@ class MQTTIngestor:
                 return
             
             message_type = topic_parts[3]
-            if message_type not in ["data", "heartbeat", "status"]:
+            if message_type not in ["data", "heartbeat"]:
                 logger.warning(f"⚠️ Type de message non supporté : {message_type}")
                 return
             
@@ -350,8 +384,8 @@ class MQTTIngestor:
                 self.handle_data_message(payload)
             elif message_type == "heartbeat":
                 self.handle_heartbeat_message(payload)
-            elif message_type == "status":
-                self.handle_status_message(payload)
+            else:
+                logger.warning(f"⚠️ Type de message non supporté ignoré : {message_type}")
                 
         except Exception as e:
             logger.error(f"❌ Erreur traitement message MQTT : {e}")
