@@ -3,7 +3,24 @@
 DATAYOTI - INGESTEUR MQTT VERS TIMESCALEDB
 ============================================
 Ingesteur MQTT qui récupère les données des capteurs DataYoti
-et les stocke directement dans TimescaleDB au lieu de fichiers CSV.
+et les stocke directement dans TimescaleDB.
+
+IMPORTANT: Ce script ne crée PAS de devices ou sites.
+Les devices et sites doivent être pré-configurés dans la base de données.
+Le script vérifie l'existence des devices via un cache optimisé avant insertion.
+
+Format des données :
+- device_id = Adresse MAC du capteur ESP32 (ex: 1C:69:20:E9:18:24)
+- site_id = Identifiant du site (ex: SITE_001) - récupéré automatiquement
+
+Topics MQTT supportés :
+- datayoti/sensor/{device_id}/data → sensor_data
+- datayoti/sensor/{device_id}/heartbeat → device_heartbeats
+
+Optimisations performances :
+- Cache des devices en mémoire (TTL: 5 minutes)
+- Validation avant insertion (évite les erreurs FK)
+- Reconnexion automatique en cas d'erreur
 
 Basé sur le code original collect_data.py
 """
@@ -14,7 +31,7 @@ import time
 import logging
 import psycopg2
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 import paho.mqtt.client as mqtt
 from paho.mqtt.enums import CallbackAPIVersion
 
@@ -79,7 +96,11 @@ class DatabaseManager:
     
     def __init__(self):
         self.connection = None
+        self.device_cache = {}  # Cache des devices existants: {device_id: site_id}
+        self.cache_last_refresh = 0  # Timestamp du dernier rafraîchissement
+        self.cache_ttl = 300  # TTL du cache: 5 minutes
         self.connect()
+        self.refresh_device_cache()
     
     def connect(self):
         """Établit la connexion à la base de données"""
@@ -105,33 +126,48 @@ class DatabaseManager:
             logger.error(f"❌ Erreur de connexion à la base de données : {e}")
             raise
     
-    def ensure_device_exists(self, device_id: str, site_id: str):
-        """S'assure que le device et le site existent dans la base"""
+    def refresh_device_cache(self):
+        """Rafraîchit le cache des devices depuis la base de données"""
         try:
             with self.connection.cursor() as cursor:
-                # Vérifier/créer le site
-                cursor.execute(
-                    "INSERT INTO sites (site_id, site_name) VALUES (%s, %s) ON CONFLICT (site_id) DO NOTHING",
-                    (site_id, f"Site {site_id}")
-                )
+                cursor.execute("SELECT device_id, site_id FROM devices")
+                results = cursor.fetchall()
                 
-                # Vérifier/créer le device
-                cursor.execute(
-                    "INSERT INTO devices (device_id, site_id, device_name) VALUES (%s, %s, %s) ON CONFLICT (device_id) DO NOTHING",
-                    (device_id, site_id, f"Capteur {device_id}")
-                )
+                self.device_cache = {device_id: site_id for device_id, site_id in results}
+                self.cache_last_refresh = time.time()
                 
+                logger.info(f"📋 Cache devices rafraîchi : {len(self.device_cache)} devices")
+                for device_id, site_id in self.device_cache.items():
+                    logger.debug(f"  - {device_id} → {site_id}")
+                    
         except Exception as e:
-            logger.error(f"❌ Erreur lors de la création device/site : {e}")
-            raise
+            logger.error(f"❌ Erreur rafraîchissement cache devices : {e}")
+            self.device_cache = {}
+    
+    def is_device_valid(self, device_id: str) -> Tuple[bool, str]:
+        """
+        Vérifie si un device existe et retourne (exists, site_id)
+        Utilise le cache pour optimiser les performances
+        """
+        # Rafraîchir le cache si nécessaire
+        if time.time() - self.cache_last_refresh > self.cache_ttl:
+            self.refresh_device_cache()
+        
+        if device_id in self.device_cache:
+            return True, self.device_cache[device_id]
+        else:
+            logger.warning(f"⚠️ Device inconnu : {device_id}")
+            return False, None
     
     def insert_sensor_data(self, device_id: str, temperature: float, 
                           humidity: float, sensor_timestamp: str):
         """Insert les données de capteur dans la table sensor_data"""
         try:
-            # S'assurer que le device existe (récupération automatique du site_id)
-            site_id = self.get_device_site_id(device_id) or "UNKNOWN"
-            self.ensure_device_exists(device_id, site_id)
+            # Vérifier que le device existe via le cache
+            device_exists, site_id = self.is_device_valid(device_id)
+            if not device_exists:
+                logger.error(f"❌ Device {device_id} non trouvé dans la base - données ignorées")
+                return
             
             with self.connection.cursor() as cursor:
                 cursor.execute("""
@@ -143,20 +179,22 @@ class DatabaseManager:
                         reception_time = EXCLUDED.reception_time
                 """, (sensor_timestamp, device_id, temperature, humidity))
                 
-                logger.info(f"✅ Données insérées pour {device_id} : T={temperature}°C, H={humidity}%")
+                logger.info(f"✅ Données insérées pour {device_id} ({site_id}) : T={temperature}°C, H={humidity}%")
                 
         except Exception as e:
             logger.error(f"❌ Erreur insertion sensor_data : {e}")
             # Reconnection en cas d'erreur
             self.connect()
     
-    def insert_heartbeat(self, device_id: str, site_id: str, 
-                        rssi: int, free_heap: int, uptime: int, min_heap: int, 
-                        ntp_sync: bool, timestamp: str):
+    def insert_heartbeat(self, device_id: str, rssi: int, free_heap: int, 
+                        uptime: int, min_heap: int, ntp_sync: bool, timestamp: str):
         """Insert les données de heartbeat dans la table device_heartbeats"""
         try:
-            # S'assurer que le device existe
-            self.ensure_device_exists(device_id, site_id)
+            # Vérifier que le device existe et récupérer le site_id via le cache
+            device_exists, site_id = self.is_device_valid(device_id)
+            if not device_exists:
+                logger.error(f"❌ Device {device_id} non trouvé dans la base - heartbeat ignoré")
+                return
             
             with self.connection.cursor() as cursor:
                 cursor.execute("""
@@ -172,7 +210,7 @@ class DatabaseManager:
                         reception_time = EXCLUDED.reception_time
                 """, (timestamp, device_id, site_id, rssi, free_heap, uptime, min_heap, ntp_sync))
                 
-                logger.info(f"💓 Heartbeat inséré pour {device_id} : RSSI={rssi}dBm, Uptime={uptime}s, NTP={ntp_sync}")
+                logger.info(f"💓 Heartbeat inséré pour {device_id} ({site_id}) : RSSI={rssi}dBm, Uptime={uptime}s, NTP={ntp_sync}")
                 
         except Exception as e:
             logger.error(f"❌ Erreur insertion heartbeat : {e}")
@@ -247,17 +285,6 @@ class MQTTIngestor:
         except Exception as e:
             logger.error(f"❌ Erreur traitement message data : {e}")
     
-    def get_device_site_id(self, device_id: str) -> Optional[str]:
-        """Récupère le site_id d'un device depuis la base de données"""
-        try:
-            with self.db.connection.cursor() as cursor:
-                cursor.execute("SELECT site_id FROM devices WHERE device_id = %s", (device_id,))
-                result = cursor.fetchone()
-                return result[0] if result else None
-        except Exception as e:
-            logger.warning(f"⚠️ Impossible de récupérer le site_id pour {device_id}: {e}")
-            return None
-    
     def normalize_timestamp_utc(self, timestamp_str: str) -> str:
         """
         Normalise un timestamp au format ISO8601 UTC
@@ -302,8 +329,7 @@ class MQTTIngestor:
     def handle_heartbeat_message(self, payload: Dict[str, Any]):
         """Traite les messages de heartbeat des capteurs"""
         try:
-            device_id = payload.get("device_id")
-            site_id = payload.get("site_id", "UNKNOWN")
+            device_id = payload.get("device_id")  # Adresse MAC du capteur
             rssi = payload.get("rssi")
             free_heap = payload.get("free_heap")
             uptime = payload.get("uptime")
@@ -318,10 +344,9 @@ class MQTTIngestor:
             # Normaliser le timestamp UTC
             timestamp = self.normalize_timestamp_utc(timestamp)
             
-            # Insertion en base
+            # Insertion en base (site_id récupéré automatiquement du cache)
             self.db.insert_heartbeat(
                 device_id=device_id,
-                site_id=site_id,
                 rssi=rssi if rssi is not None else -999,
                 free_heap=free_heap if free_heap is not None else 0,
                 uptime=uptime if uptime is not None else 0,
@@ -330,22 +355,6 @@ class MQTTIngestor:
                 timestamp=timestamp
             )
             
-        except Exception as e:
-            logger.error(f"❌ Erreur traitement heartbeat : {e}")
-    
-    def handle_status_message(self, payload: Dict[str, Any]):
-        """Traite les messages de statut des capteurs"""
-        try:
-            device_id = payload.get("device_id")
-            site_id = payload.get("site_id", "UNKNOWN")
-            timestamp = payload.get("timestamp", datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'))
-            
-            # Validation des données
-            if not device_id:
-                raise ValueError("device_id manquant dans le message status")
-            
-            # Normaliser le timestamp UTC
-            timestamp = self.normalize_timestamp_utc(timestamp)
         except Exception as e:
             logger.error(f"❌ Erreur traitement heartbeat : {e}")
 

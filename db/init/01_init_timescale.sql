@@ -68,12 +68,12 @@ CREATE TABLE IF NOT EXISTS devices (
 CREATE INDEX IF NOT EXISTS idx_devices_device_id ON devices(device_id);
 CREATE INDEX IF NOT EXISTS idx_devices_site_id ON devices(site_id);
 
--- Insérer quelques devices de test basés sur les données existantes
+-- Insérer quelques devices de test basés sur les vraies adresses MAC ESP32
 INSERT INTO devices (device_id, site_id) VALUES
-    ('1C:69:20:E9:18:24', 'SITE_001'),
-    ('88:13:BF:08:04:A4', 'SITE_002'),
-    ('1C:69:20:30:24:94', 'SITE_003'),
-    ('88:13:BF:08:04:A4', 'SITE_004')
+    ('1C:69:20:E9:18:24', 'SITE_001'),  -- ESP32 #1
+    ('88:13:BF:08:04:A4', 'SITE_002'),  -- ESP32 #2  
+    ('1C:69:20:30:24:94', 'SITE_003'),  -- ESP32 #3
+    ('D4:8A:FC:A0:B1:C2', 'SITE_004')   -- ESP32 #4 (corrigé)
 ON CONFLICT (device_id) DO NOTHING;
 
 -- =============================================================================
