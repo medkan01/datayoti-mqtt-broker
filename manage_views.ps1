@@ -76,7 +76,7 @@ function Remove-Views {
     
     # Liste des vues matérialisées (agrégations continues)
     $materializedViews = @(
-        "semi_hourly_sensor_stats",
+        "sensor_data_semi_hourly",
         "sensor_data_hourly"
     )
     

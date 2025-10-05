@@ -67,11 +67,12 @@ ORDER BY
     time DESC;
 
 -- Vue pour les statistiques semi-horaires des capteurs
-CREATE MATERIALIZED VIEW IF NOT EXISTS semi_hourly_sensor_stats
+CREATE MATERIALIZED VIEW IF NOT EXISTS sensor_data_semi_hourly
 WITH (timescaledb.continuous) AS
 SELECT
     device_id,
-    time_bucket('30 minutes', time) AS thirty_minute_bucket,
+    time_bucket('30 minutes', time) AS bucket_start,
+    time_bucket('30 minutes', time) + INTERVAL '30 minutes' AS bucket_end,
     COUNT(temperature) as measurement_count,
     AVG(temperature) as avg_temperature,
     MIN(temperature) as min_temperature,
@@ -83,13 +84,13 @@ FROM
     sensor_data
 GROUP BY 
     device_id, 
-    thirty_minute_bucket
+    bucket_start
 ORDER BY 
-    thirty_minute_bucket DESC, 
+    bucket_start DESC, 
     device_id;
 
 -- Politique de rafraîchissement pour l'agrégation semi-horaire
-SELECT add_continuous_aggregate_policy('semi_hourly_sensor_stats',
+SELECT add_continuous_aggregate_policy('sensor_data_semi_hourly',
     start_offset => INTERVAL '7 days',
     end_offset => INTERVAL '0',
     schedule_interval => INTERVAL '5 minutes');
@@ -98,8 +99,9 @@ SELECT add_continuous_aggregate_policy('semi_hourly_sensor_stats',
 CREATE MATERIALIZED VIEW IF NOT EXISTS sensor_data_hourly
 WITH (timescaledb.continuous) AS
 SELECT 
-    time_bucket('1 hour', time) AS bucket,
     device_id,
+    time_bucket('1 hour', time) AS bucket_start,
+    time_bucket('1 hour', time) + INTERVAL '1 hour' AS bucket_end,
     AVG(temperature) as avg_temperature,
     MIN(temperature) as min_temperature,
     MAX(temperature) as max_temperature,
@@ -110,10 +112,10 @@ SELECT
 FROM 
     sensor_data
 GROUP BY 
-    bucket, 
-    device_id
+    device_id,
+    bucket_start
 ORDER BY 
-    bucket DESC,
+    bucket_start DESC,
     device_id;
 
 -- Politique de rafraîchissement pour l'agrégation horaire
@@ -127,7 +129,7 @@ SELECT add_continuous_aggregate_policy('sensor_data_hourly',
 -- =============================================================================
 
 -- Permissions pour Grafana sur les vues matérialisées
-GRANT SELECT ON semi_hourly_sensor_stats, sensor_data_hourly TO grafana_reader;
+GRANT SELECT ON sensor_data_semi_hourly, sensor_data_hourly TO grafana_reader;
 
 -- Permissions pour Grafana sur les vues standards
 GRANT SELECT ON latest_sensor_readings, device_health TO grafana_reader;
@@ -146,8 +148,8 @@ BEGIN
     RAISE NOTICE '  ✓ device_health - Statut et santé des capteurs (online/warning/offline)';
     RAISE NOTICE '';
     RAISE NOTICE 'Agrégations continues TimescaleDB:';
-    RAISE NOTICE '  ✓ semi_hourly_sensor_stats - Statistiques par tranches de 30 minutes';
-    RAISE NOTICE '  ✓ sensor_data_hourly - Moyennes et extrêmes horaires';
+    RAISE NOTICE '  ✓ sensor_data_semi_hourly - Statistiques par tranches de 30 minutes (bucket_start + bucket_end)';
+    RAISE NOTICE '  ✓ sensor_data_hourly - Moyennes et extrêmes horaires (bucket_start + bucket_end)';
     RAISE NOTICE '';
     RAISE NOTICE 'Configuration automatique:';
     RAISE NOTICE '  🔄 Rafraîchissement des agrégations: toutes les 5 minutes';

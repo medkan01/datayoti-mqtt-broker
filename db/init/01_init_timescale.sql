@@ -73,7 +73,8 @@ INSERT INTO devices (device_id, site_id) VALUES
     ('1C:69:20:E9:18:24', 'SITE_001'),  -- ESP32 #1
     ('88:13:BF:08:04:A4', 'SITE_002'),  -- ESP32 #2  
     ('1C:69:20:30:24:94', 'SITE_003'),  -- ESP32 #3
-    ('D4:8A:FC:A0:B1:C2', 'SITE_004')   -- ESP32 #4 (corrigé)
+    ('D4:8A:FC:A0:B1:C2', 'SITE_004'),  -- ESP32 #4
+    ('1C:69:20:E9:10:4C', 'SITE_001')   -- ESP32 #5 (test)
 ON CONFLICT (device_id) DO NOTHING;
 
 -- =============================================================================
