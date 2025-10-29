@@ -10,12 +10,12 @@ Les devices et sites doivent être pré-configurés dans la base de données.
 Le script vérifie l'existence des devices via un cache optimisé avant insertion.
 
 Format des données :
-- device_id = Adresse MAC du capteur ESP32 (ex: 1C:69:20:E9:18:24)
-- site_id = Identifiant du site (ex: SITE_001) - récupéré automatiquement
+- device_mac_addr = Adresse MAC du capteur ESP32 (ex: 1C:69:20:E9:18:24)
+- site_ref = Référence du site (ex: SITE_001) - récupéré automatiquement
 
 Topics MQTT supportés :
-- datayoti/sensor/{device_id}/data → sensor_data
-- datayoti/sensor/{device_id}/heartbeat → device_heartbeats
+- datayoti/sensor/{device_mac_addr}/data → sensor_data
+- datayoti/sensor/{device_mac_addr}/heartbeat → device_heartbeats
 
 Optimisations performances :
 - Cache des devices en mémoire (TTL: 5 minutes)
@@ -96,7 +96,7 @@ class DatabaseManager:
     
     def __init__(self):
         self.connection = None
-        self.device_cache = {}  # Cache des devices existants: {device_id: site_id}
+        self.device_cache = {}  # Cache des devices existants: {device_mac_addr: site_ref}
         self.cache_last_refresh = 0  # Timestamp du dernier rafraîchissement
         self.cache_ttl = 300  # TTL du cache: 5 minutes
         self.connect()
@@ -130,88 +130,88 @@ class DatabaseManager:
         """Rafraîchit le cache des devices depuis la base de données"""
         try:
             with self.connection.cursor() as cursor:
-                cursor.execute("SELECT device_id, site_id FROM devices")
+                cursor.execute("SELECT device_mac_addr, site_ref FROM devices")
                 results = cursor.fetchall()
-                
-                self.device_cache = {device_id: site_id for device_id, site_id in results}
+
+                self.device_cache = {device_mac_addr: site_ref for device_mac_addr, site_ref in results}
                 self.cache_last_refresh = time.time()
                 
                 logger.info(f"📋 Cache devices rafraîchi : {len(self.device_cache)} devices")
-                for device_id, site_id in self.device_cache.items():
-                    logger.debug(f"  - {device_id} → {site_id}")
+                for device_mac_addr, site_ref in self.device_cache.items():
+                    logger.debug(f"  - {device_mac_addr} → {site_ref}")
                     
         except Exception as e:
             logger.error(f"❌ Erreur rafraîchissement cache devices : {e}")
             self.device_cache = {}
-    
-    def is_device_valid(self, device_id: str) -> Tuple[bool, str]:
+
+    def is_device_valid(self, device_mac_addr: str) -> Tuple[bool, str]:
         """
-        Vérifie si un device existe et retourne (exists, site_id)
+        Vérifie si un device existe et retourne (exists, site_ref)
         Utilise le cache pour optimiser les performances
         """
         # Rafraîchir le cache si nécessaire
         if time.time() - self.cache_last_refresh > self.cache_ttl:
             self.refresh_device_cache()
-        
-        if device_id in self.device_cache:
-            return True, self.device_cache[device_id]
+
+        if device_mac_addr in self.device_cache:
+            return True, self.device_cache[device_mac_addr]
         else:
-            logger.warning(f"⚠️ Device inconnu : {device_id}")
+            logger.warning(f"⚠️ Device inconnu : {device_mac_addr}")
             return False, None
-    
-    def insert_sensor_data(self, device_id: str, temperature: float, 
+
+    def insert_sensor_data(self, device_mac_addr: str, temperature: float, 
                           humidity: float, sensor_timestamp: str):
         """Insert les données de capteur dans la table sensor_data"""
         try:
             # Vérifier que le device existe via le cache
-            device_exists, site_id = self.is_device_valid(device_id)
+            device_exists, site_ref = self.is_device_valid(device_mac_addr)
             if not device_exists:
-                logger.error(f"❌ Device {device_id} non trouvé dans la base - données ignorées")
+                logger.error(f"❌ Device {device_mac_addr} non trouvé dans la base - données ignorées")
                 return
             
             with self.connection.cursor() as cursor:
                 cursor.execute("""
-                    INSERT INTO sensor_data (time, device_id, temperature, humidity, reception_time)
+                    INSERT INTO sensor_data (time, device_mac_addr, temperature, humidity, reception_time)
                     VALUES (%s, %s, %s, %s, NOW())
-                    ON CONFLICT (device_id, time) DO UPDATE SET
+                    ON CONFLICT (device_mac_addr, time) DO UPDATE SET
                         temperature = EXCLUDED.temperature,
                         humidity = EXCLUDED.humidity,
                         reception_time = EXCLUDED.reception_time
-                """, (sensor_timestamp, device_id, temperature, humidity))
-                
-                logger.info(f"✅ Données insérées pour {device_id} ({site_id}) : T={temperature}°C, H={humidity}%")
-                
+                """, (sensor_timestamp, device_mac_addr, temperature, humidity))
+
+                logger.info(f"✅ Données insérées pour {device_mac_addr} ({site_ref}) : T={temperature}°C, H={humidity}%")
+
         except Exception as e:
             logger.error(f"❌ Erreur insertion sensor_data : {e}")
             # Reconnection en cas d'erreur
             self.connect()
-    
-    def insert_heartbeat(self, device_id: str, rssi: int, free_heap: int, 
+
+    def insert_heartbeat(self, device_mac_addr: str, rssi: int, free_heap: int, 
                         uptime: int, min_heap: int, ntp_sync: bool, timestamp: str):
         """Insert les données de heartbeat dans la table device_heartbeats"""
         try:
-            # Vérifier que le device existe et récupérer le site_id via le cache
-            device_exists, site_id = self.is_device_valid(device_id)
+            # Vérifier que le device existe et récupérer le site_ref via le cache
+            device_exists, site_ref = self.is_device_valid(device_mac_addr)
             if not device_exists:
-                logger.error(f"❌ Device {device_id} non trouvé dans la base - heartbeat ignoré")
+                logger.error(f"❌ Device {device_mac_addr} non trouvé dans la base - heartbeat ignoré")
                 return
             
             with self.connection.cursor() as cursor:
                 cursor.execute("""
-                    INSERT INTO device_heartbeats (time, device_id, site_id, rssi, free_heap, uptime, min_heap, ntp_sync, reception_time)
+                    INSERT INTO device_heartbeats (time, device_mac_addr, site_ref, rssi, free_heap, uptime, min_heap, ntp_sync, reception_time)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
-                    ON CONFLICT (device_id, time) DO UPDATE SET
-                        site_id = EXCLUDED.site_id,
+                    ON CONFLICT (device_mac_addr, time) DO UPDATE SET
+                        site_ref = EXCLUDED.site_ref,
                         rssi = EXCLUDED.rssi,
                         free_heap = EXCLUDED.free_heap,
                         uptime = EXCLUDED.uptime,
                         min_heap = EXCLUDED.min_heap,
                         ntp_sync = EXCLUDED.ntp_sync,
                         reception_time = EXCLUDED.reception_time
-                """, (timestamp, device_id, site_id, rssi, free_heap, uptime, min_heap, ntp_sync))
-                
-                logger.info(f"💓 Heartbeat inséré pour {device_id} ({site_id}) : RSSI={rssi}dBm, Uptime={uptime}s, NTP={ntp_sync}")
-                
+                """, (timestamp, device_mac_addr, site_ref, rssi, free_heap, uptime, min_heap, ntp_sync))
+
+                logger.info(f"💓 Heartbeat inséré pour {device_mac_addr} ({site_ref}) : RSSI={rssi}dBm, Uptime={uptime}s, NTP={ntp_sync}")
+
         except Exception as e:
             logger.error(f"❌ Erreur insertion heartbeat : {e}")
             # Reconnection en cas d'erreur
@@ -257,13 +257,13 @@ class MQTTIngestor:
     def handle_data_message(self, payload: Dict[str, Any]):
         """Traite les messages de données des capteurs"""
         try:
-            device_id = payload.get("device_id")
+            device_mac_addr = payload.get("device_id")  # Ce `device_id` est l'adresse MAC du capteur. Attention à la confusion possible. TODO: mettre à jour les firmwares pour plus de clarté.
             temperature = payload.get("temperature")
             humidity = payload.get("humidity")
             sensor_timestamp = payload.get("timestamp")
             
             # Validation des données
-            if not all([device_id, temperature is not None, humidity is not None, sensor_timestamp]):
+            if not all([device_mac_addr, temperature is not None, humidity is not None, sensor_timestamp]):
                 raise ValueError("Données manquantes dans le message data")
             
             # Conversion du timestamp
@@ -273,10 +273,10 @@ class MQTTIngestor:
             
             # Validation et normalisation du format ISO8601 UTC
             sensor_timestamp = self.normalize_timestamp_utc(sensor_timestamp)
-            
-            # Insertion en base (site_id récupéré automatiquement)
+
+            # Insertion en base (site_ref récupéré automatiquement)
             self.db.insert_sensor_data(
-                device_id=device_id,
+                device_mac_addr=device_mac_addr,
                 temperature=float(temperature),
                 humidity=float(humidity),
                 sensor_timestamp=sensor_timestamp
@@ -329,7 +329,7 @@ class MQTTIngestor:
     def handle_heartbeat_message(self, payload: Dict[str, Any]):
         """Traite les messages de heartbeat des capteurs"""
         try:
-            device_id = payload.get("device_id")  # Adresse MAC du capteur
+            device_mac_addr = payload.get("device_id")  # Adresse MAC du capteur. Attention à la confusion possible avec le nom `device_id`. TODO: mettre à jour les firmwares pour plus de clarté.
             rssi = payload.get("rssi")
             free_heap = payload.get("free_heap")
             uptime = payload.get("uptime")
@@ -338,15 +338,15 @@ class MQTTIngestor:
             timestamp = payload.get("timestamp", datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'))
             
             # Validation des données
-            if not device_id:
-                raise ValueError("device_id manquant dans le heartbeat")
+            if not device_mac_addr:
+                raise ValueError("device_mac_addr manquant dans le heartbeat")
             
             # Normaliser le timestamp UTC
             timestamp = self.normalize_timestamp_utc(timestamp)
-            
-            # Insertion en base (site_id récupéré automatiquement du cache)
+
+            # Insertion en base (site_ref récupéré automatiquement du cache)
             self.db.insert_heartbeat(
-                device_id=device_id,
+                device_mac_addr=device_mac_addr,
                 rssi=rssi if rssi is not None else -999,
                 free_heap=free_heap if free_heap is not None else 0,
                 uptime=uptime if uptime is not None else 0,
@@ -379,13 +379,13 @@ class MQTTIngestor:
             except json.JSONDecodeError as e:
                 logger.error(f"❌ Erreur de décodage JSON : {e}")
                 return
-            
-            # Vérification de la cohérence du device_id
-            topic_device_id = topic_parts[2]
-            payload_device_id = payload.get("device_id")
-            
-            if payload_device_id != topic_device_id:
-                logger.warning(f"⚠️ Incohérence device_id : topic={topic_device_id}, payload={payload_device_id}")
+
+            # Vérification de la cohérence du device_mac_addr
+            topic_device_mac_addr = topic_parts[2]
+            payload_device_mac_addr = payload.get("device_id")
+
+            if payload_device_mac_addr != topic_device_mac_addr:
+                logger.warning(f"⚠️ Incohérence device_mac_addr : topic={topic_device_mac_addr}, payload={payload_device_mac_addr} - message ignoré")
                 return
             
             # Router vers la bonne fonction
