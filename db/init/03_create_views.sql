@@ -48,7 +48,6 @@ ORDER BY
 CREATE OR REPLACE VIEW device_health AS
 SELECT DISTINCT ON (device_id)
     device_id,
-    site_id,
     time AS last_heartbeat,
     rssi,
     free_heap,
