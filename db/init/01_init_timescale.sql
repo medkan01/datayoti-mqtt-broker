@@ -33,23 +33,23 @@ $$;
 -- Table de référence pour stocker les informations des sites
 CREATE TABLE IF NOT EXISTS sites (
     id SERIAL PRIMARY KEY,                   -- ID auto-incrémenté
-    site_id VARCHAR(50) UNIQUE NOT NULL,     -- Identifiant unique du site
+    site_ref VARCHAR(50) UNIQUE NOT NULL,    -- Référence unique du site
     site_name VARCHAR(255),
     description TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Index sur site_id pour les recherches rapides
-CREATE INDEX IF NOT EXISTS idx_sites_site_id ON sites(site_id);
+-- Index sur site_ref pour les recherches rapides
+CREATE INDEX IF NOT EXISTS idx_sites_site_id ON sites(site_ref);
 
 -- Insérer quelques sites par défaut basés sur les données existantes
-INSERT INTO sites (site_id, site_name, description) VALUES 
+INSERT INTO sites (site_ref, site_name, description) VALUES 
     ('SITE_001', 'Site Nord (Salon)', 'Capteur principal du salon'),
     ('SITE_002', 'Site Sud (Chambre Sab)', 'Capteur de la chambre de Sab'),
     ('SITE_003', 'Site Est (Chambre Anna)', 'Capteur de la chambre de Anna'),
     ('SITE_004', 'Site Ouest (Cave)', 'Capteur de la cave')
-ON CONFLICT (site_id) DO NOTHING;
+ON CONFLICT (site_ref) DO NOTHING;
 
 -- =============================================================================
 -- TABLE DES CAPTEURS
@@ -73,8 +73,7 @@ INSERT INTO devices (device_id, site_id) VALUES
     ('1C:69:20:E9:18:24', 'SITE_001'),  -- ESP32 #1
     ('88:13:BF:08:04:A4', 'SITE_002'),  -- ESP32 #2  
     ('1C:69:20:30:24:94', 'SITE_003'),  -- ESP32 #3
-    ('D4:8A:FC:A0:B1:C2', 'SITE_004'),  -- ESP32 #4
-    ('1C:69:20:E9:10:4C', 'SITE_001')   -- ESP32 #5 (test)
+    ('1C:69:20:E9:10:4C', 'SITE_004')   -- ESP32 #4
 ON CONFLICT (device_id) DO NOTHING;
 
 -- =============================================================================
@@ -114,7 +113,6 @@ $$;
 CREATE TABLE IF NOT EXISTS device_heartbeats (
     time TIMESTAMP WITH TIME ZONE NOT NULL,  -- Timestamp du heartbeat (UTC)
     device_id VARCHAR(17) NOT NULL,          -- ID du device (MAC address)
-    site_id VARCHAR(50) NOT NULL,            -- ID du site (fourni par ESP32)
     rssi INTEGER,                            -- Force du signal WiFi en dBm
     free_heap INTEGER,                       -- Mémoire libre actuelle en bytes
     uptime INTEGER,                          -- Temps de fonctionnement en secondes
