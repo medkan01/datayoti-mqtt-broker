@@ -196,9 +196,6 @@ class DatabaseManager:
                 logger.error(f"❌ Device {device_mac_addr} non trouvé dans la base - heartbeat ignoré")
                 return
             
-            logger.debug(f"💓 Insertion heartbeat pour {device_mac_addr} ({site_ref}) : RSSI={rssi}, Uptime={uptime}, NTP={ntp_sync}")
-            logger.debug(f"tuple: {(timestamp, device_mac_addr, rssi, free_heap, uptime, min_heap, ntp_sync)}")
-            
             with self.connection.cursor() as cursor:
                 cursor.execute("""
                     INSERT INTO device_heartbeats (time, device_mac_addr, rssi, free_heap, uptime, min_heap, ntp_sync, reception_time)
