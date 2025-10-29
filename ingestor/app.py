@@ -198,19 +198,18 @@ class DatabaseManager:
             
             with self.connection.cursor() as cursor:
                 cursor.execute("""
-                    INSERT INTO device_heartbeats (time, device_mac_addr, site_ref, rssi, free_heap, uptime, min_heap, ntp_sync, reception_time)
+                    INSERT INTO device_heartbeats (time, device_mac_addr, rssi, free_heap, uptime, min_heap, ntp_sync, reception_time)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
                     ON CONFLICT (device_mac_addr, time) DO UPDATE SET
-                        site_ref = EXCLUDED.site_ref,
                         rssi = EXCLUDED.rssi,
                         free_heap = EXCLUDED.free_heap,
                         uptime = EXCLUDED.uptime,
                         min_heap = EXCLUDED.min_heap,
                         ntp_sync = EXCLUDED.ntp_sync,
                         reception_time = EXCLUDED.reception_time
-                """, (timestamp, device_mac_addr, site_ref, rssi, free_heap, uptime, min_heap, ntp_sync))
+                """, (timestamp, device_mac_addr, rssi, free_heap, uptime, min_heap, ntp_sync))
 
-                logger.info(f"💓 Heartbeat inséré pour {device_mac_addr} ({site_ref}) : RSSI={rssi}dBm, Uptime={uptime}s, NTP={ntp_sync}")
+                logger.info(f"💓 Heartbeat inséré pour {device_mac_addr} : RSSI={rssi}dBm, Uptime={uptime}s, NTP={ntp_sync}")
 
         except Exception as e:
             logger.error(f"❌ Erreur insertion heartbeat : {e}")
