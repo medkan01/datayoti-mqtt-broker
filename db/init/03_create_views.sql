@@ -32,8 +32,8 @@ $$;
 
 -- Vue pour les dernières mesures de chaque capteur
 CREATE OR REPLACE VIEW latest_sensor_readings AS
-SELECT DISTINCT ON (device_id)
-    device_id,
+SELECT DISTINCT ON (device_mac_addr)
+    device_mac_addr,
     time,
     temperature,
     humidity,
@@ -41,13 +41,13 @@ SELECT DISTINCT ON (device_id)
 FROM 
     sensor_data
 ORDER BY 
-    device_id, 
+    device_mac_addr, 
     time DESC;
 
 -- Vue pour le statut des capteurs (derniers heartbeats)
 CREATE OR REPLACE VIEW device_health AS
-SELECT DISTINCT ON (device_id)
-    device_id,
+SELECT DISTINCT ON (device_mac_addr)
+    device_mac_addr,
     time AS last_heartbeat,
     rssi,
     free_heap,
@@ -62,14 +62,14 @@ SELECT DISTINCT ON (device_id)
 FROM 
     device_heartbeats
 ORDER BY 
-    device_id, 
+    device_mac_addr, 
     time DESC;
 
 -- Vue pour les statistiques semi-horaires des capteurs
 CREATE MATERIALIZED VIEW IF NOT EXISTS sensor_data_semi_hourly
 WITH (timescaledb.continuous) AS
 SELECT
-    device_id,
+    device_mac_addr,
     time_bucket('30 minutes', time) AS bucket_start,
     time_bucket('30 minutes', time) + INTERVAL '30 minutes' AS bucket_end,
     COUNT(temperature) as measurement_count,
@@ -82,11 +82,11 @@ SELECT
 FROM 
     sensor_data
 GROUP BY 
-    device_id, 
+    device_mac_addr, 
     bucket_start
 ORDER BY 
     bucket_start DESC, 
-    device_id;
+    device_mac_addr;
 
 -- Politique de rafraîchissement pour l'agrégation semi-horaire
 SELECT add_continuous_aggregate_policy('sensor_data_semi_hourly',
@@ -98,7 +98,7 @@ SELECT add_continuous_aggregate_policy('sensor_data_semi_hourly',
 CREATE MATERIALIZED VIEW IF NOT EXISTS sensor_data_hourly
 WITH (timescaledb.continuous) AS
 SELECT 
-    device_id,
+    device_mac_addr,
     time_bucket('1 hour', time) AS bucket_start,
     time_bucket('1 hour', time) + INTERVAL '1 hour' AS bucket_end,
     AVG(temperature) as avg_temperature,
@@ -111,11 +111,11 @@ SELECT
 FROM 
     sensor_data
 GROUP BY 
-    device_id,
+    device_mac_addr,
     bucket_start
 ORDER BY 
     bucket_start DESC,
-    device_id;
+    device_mac_addr;
 
 -- Politique de rafraîchissement pour l'agrégation horaire
 SELECT add_continuous_aggregate_policy('sensor_data_hourly',
