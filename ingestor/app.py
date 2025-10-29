@@ -199,7 +199,7 @@ class DatabaseManager:
             with self.connection.cursor() as cursor:
                 cursor.execute("""
                     INSERT INTO device_heartbeats (time, device_mac_addr, rssi, free_heap, uptime, min_heap, ntp_sync, reception_time)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
                     ON CONFLICT (device_mac_addr, time) DO UPDATE SET
                         rssi = EXCLUDED.rssi,
                         free_heap = EXCLUDED.free_heap,
