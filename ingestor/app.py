@@ -144,7 +144,7 @@ class DatabaseManager:
             logger.error(f"❌ Erreur rafraîchissement cache devices : {e}")
             self.device_cache = {}
 
-    def is_device_valid(self, device_mac_addr: str) -> Tuple[bool, str]:
+    def is_device_valid(self, device_mac_addr: str) -> Tuple[bool, Optional[str]]:
         """
         Vérifie si un device existe et retourne (exists, site_ref)
         Utilise le cache pour optimiser les performances
@@ -196,6 +196,9 @@ class DatabaseManager:
                 logger.error(f"❌ Device {device_mac_addr} non trouvé dans la base - heartbeat ignoré")
                 return
             
+            logger.debug(f"💓 Insertion heartbeat pour {device_mac_addr} ({site_ref}) : RSSI={rssi}, Uptime={uptime}, NTP={ntp_sync}")
+            logger.debug(f"tuple: {(timestamp, device_mac_addr, rssi, free_heap, uptime, min_heap, ntp_sync)}")
+            
             with self.connection.cursor() as cursor:
                 cursor.execute("""
                     INSERT INTO device_heartbeats (time, device_mac_addr, rssi, free_heap, uptime, min_heap, ntp_sync, reception_time)
@@ -209,7 +212,7 @@ class DatabaseManager:
                         reception_time = EXCLUDED.reception_time
                 """, (timestamp, device_mac_addr, rssi, free_heap, uptime, min_heap, ntp_sync))
 
-                logger.info(f"💓 Heartbeat inséré pour {device_mac_addr} : RSSI={rssi}dBm, Uptime={uptime}s, NTP={ntp_sync}")
+                logger.info(f"💓 Heartbeat inséré pour {device_mac_addr} ({site_ref or 'UNKNOWN'}) : RSSI={rssi}dBm, Uptime={uptime}s, NTP={ntp_sync}")
 
         except Exception as e:
             logger.error(f"❌ Erreur insertion heartbeat : {e}")
