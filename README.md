@@ -1,138 +1,159 @@
-# DataYoti MQTT Broker
+# 💾 DataYoti Realtime
 
-## 📋 Vue d'ensemble
+> **Du signal à l'action** - Infrastructure de monitoring temps réel sur Raspberry Pi
 
-**DataYoti MQTT Broker** est une infrastructure complète de collecte, stockage et visualisation de données IoT pour capteurs de température et d'humidité. Le système est conçu pour être déployé sur des environnements à ressources limitées comme le Raspberry Pi, tout en offrant des capacités d'analyse avancées grâce à TimescaleDB.
+**DataYoti Realtime** est le cœur opérationnel du projet DataYoti. Cette infrastructure, déployée sur **Raspberry Pi**, collecte, stocke et visualise les données environnementales en temps réel, optimisée pour fonctionner efficacement sur des ressources limitées.
 
-### Architecture
+## 🎯 Place dans l'écosystème DataYoti
+
+```
+┌─────────────────────────────────────────┐
+│  1️⃣  Capteurs ESP32 (DHT22)            │  → datayoti-firmware
+│      ↓ MQTT                             │
+│  2️⃣  Infrastructure temps réel          │  ← VOUS ÊTES ICI (🍓 Raspberry Pi)
+│      ↓ Ingestion & monitoring           │
+│  3️⃣  Data Warehouse + Analytics        │  → datayoti-warehouse
+│      ↓ Dashboards & Conformité          │
+│  4️⃣  Insights actionnables              │
+└─────────────────────────────────────────┘
+```
+
+Ce composant assure :
+- 📡 **Réception** des données MQTT des capteurs
+- 💾 **Stockage** optimisé pour séries temporelles (TimescaleDB)
+- 📊 **Visualisation** temps réel (Grafana)
+- 🔗 **Source OLTP** pour l'entrepôt de données analytique
+- 🍓 **Déploiement** optimisé pour Raspberry Pi
+
+---
+
+## 🏗️ Architecture
 
 ```
 Capteurs ESP32 (DHT22) 
-    ↓ MQTT (datayoti/sensor/+/data)
-Eclipse Mosquitto (MQTT Broker)
-    ↓
-Ingestor Python
-    ↓
-TimescaleDB (PostgreSQL + extension temps-réel)
-    ↓
-Grafana (Visualisation)
+    ↓ MQTT topics
+Eclipse Mosquitto (MQTT Broker) 🍓
+    ↓ Subscribe & process
+Ingestor Python 🍓
+    ↓ Insert
+TimescaleDB (PostgreSQL + time-series) 🍓
+    ↓ Visualize
+Grafana (Dashboards) 🍓
+
+🍓 = Déployé sur Raspberry Pi
 ```
 
-### Composants principaux
+### Stack technique
 
 | Composant | Technologie | Rôle |
 |-----------|-------------|------|
-| **MQTT Broker** | Eclipse Mosquitto 2.0.18 | Réception des messages des capteurs IoT |
-| **Base de données** | TimescaleDB | Stockage optimisé pour séries temporelles |
-| **Ingestor** | Python 3 + paho-mqtt + psycopg2 | Transfert MQTT → TimescaleDB |
-| **Visualisation** | Grafana | Dashboards et alertes en temps réel |
+| **MQTT Broker** | Eclipse Mosquitto 2.0.18 | Réception messages IoT |
+| **Ingestor** | Python 3.x | Transfert MQTT → DB |
+| **Base de données** | TimescaleDB (PostgreSQL) | Stockage séries temporelles |
+| **Visualisation** | Grafana | Dashboards temps réel |
+| **Orchestration** | Docker Compose | Infrastructure as Code |
+| **Plateforme** | 🍓 Raspberry Pi | Déploiement edge computing |
 
-## 🎯 Fonctionnalités
 
-### Collecte de données
+---
 
-- **Topics MQTT** :
-  - `datayoti/sensor/{device_mac_addr}/data` : Données de température/humidité
-  - `datayoti/sensor/{device_mac_addr}/heartbeat` : Statut de santé des capteurs
+## � Fonctionnalités clés
 
-- **Format des données** :
-  ```json
-  {
-    "device_id": "1C:69:20:E9:18:24",
-    "temperature": 22.5,
-    "humidity": 65.3,
-    "timestamp": "2025-11-03T14:30:00Z"
-  }
-  ```
+### Collecte et traçabilité
 
-### Base de données
+- 📡 **Topics MQTT** :
+  - `datayoti/sensor/{device_mac}/data` : Température et humidité
+  - `datayoti/sensor/{device_mac}/heartbeat` : Santé des capteurs
+  - `datayoti/sensor/{device_mac}/status` : État online/offline
 
-- **Tables principales** :
-  - `sensor_data` : Mesures de température et humidité (hypertable)
-  - `device_heartbeats` : Monitoring de la santé des capteurs (hypertable)
-  - `devices` : Référentiel des capteurs (MAC address)
-  - `sites` : Organisation par site d'installation
+### Stockage optimisé
 
-- **Vues matérialisées** :
-  - `sensor_data_semi_hourly` : Agrégations par tranches de 30 minutes
-  - `sensor_data_hourly` : Statistiques horaires
-  - `latest_sensor_readings` : Dernières valeurs par capteur
-  - `device_health` : Statut en temps réel (online/warning/offline)
+- 🗄️ **Tables TimescaleDB** :
+  - `sensor_data` : Mesures environnementales (hypertable)
+  - `device_heartbeats` : Monitoring santé capteurs (hypertable)
+  - `devices` : Référentiel des capteurs
+  - `sites` : Organisation par site
 
-### Optimisations
+- 📊 **Vues matérialisées** :
+  - `sensor_data_hourly` : Agrégations horaires
+  - `latest_sensor_readings` : Dernières valeurs
+  - `device_health` : Statut temps réel (online/warning/offline)
 
-- **Cache intelligent** : Les devices sont mis en cache (TTL: 5 min) pour réduire les requêtes DB
-- **Partitionnement temporel** : Chunks de 1 jour pour performances optimales
-- **Rétention automatique** : 
-  - Données capteurs : 1 an
-  - Heartbeats : 6 mois
-- **Configuration Raspberry Pi** : Paramètres mémoire adaptés (100MB, 1 CPU)
-- **Timezone UTC** : Tous les timestamps sont en UTC pour éviter les problèmes de fuseau horaire
+### Performance
 
-## 🚀 Installation
+- ⚡ **Cache intelligent** : Devices en cache (TTL: 5 min)
+- 📦 **Partitionnement temporel** : Chunks de 1 jour
+- 🔄 **Rétention automatique** : 1 an données capteurs, 6 mois heartbeats
+- � **Optimisé Raspberry Pi** : Configuration mémoire adaptée (100MB shared_buffers, 1 CPU)
+- ⚙️ **Ressources limitées** : Fonctionne avec 2 GB RAM
+
+---
+
+## 🚀 Installation rapide
 
 ### Prérequis
 
-- Docker 20.10+
-- Docker Compose 2.0+
-- 2 GB RAM minimum (recommandé : 4 GB)
-- 10 GB espace disque
+- **Raspberry Pi** 3B+ ou supérieur (4 GB RAM recommandé)
+- **Raspberry Pi OS** (64-bit recommandé)
+- **Docker** 20.10+ et **Docker Compose** 2.0+
+- 2 GB RAM minimum (4 GB recommandé)
+- 16 GB carte SD minimum (32 GB recommandé)
+- Capteurs ESP32 configurés (voir [datayoti-firmware](../datayoti-firmware))
 
-### Configuration rapide
+### Installation sur Raspberry Pi
 
-1. **Clonez le dépôt** :
-   ```bash
-   git clone https://github.com/medkan01/datayoti-mqtt-broker.git
-   cd datayoti-mqtt-broker
-   ```
+```bash
+# Sur votre Raspberry Pi
 
-2. **Créez le fichier `.env`** :
-   ```bash
-   cp .env.example .env
-   ```
+# 1. Cloner le projet
+git clone https://github.com/medkan01/datayoti-realtime.git
+cd datayoti-realtime
 
-3. **Configurez les mots de passe** dans `.env` :
-   ```env
-   # Base de données PostgreSQL/TimescaleDB
-   PG_USER=postgres
-   PG_PASSWORD=votre_mot_de_passe_postgres
-   PG_DATABASE=datayoti_db
+# 2. Configurer l'environnement
+cp .env.example .env
+# Éditer .env avec vos mots de passe
 
-   # Utilisateurs de base de données
-   MQTT_INGESTOR_PASSWORD=votre_mot_de_passe_ingestor
-   GRAFANA_READER_PASSWORD=votre_mot_de_passe_grafana
+# 3. Démarrer l'infrastructure
+docker-compose up -d
 
-   # MQTT
-   MQTT_USER=datayoti_monitor
-   MQTT_PASSWORD=votre_mot_de_passe_mqtt
+# 4. Créer les vues (première fois)
+./manage_views.sh create           # Sur Raspberry Pi (Linux)
+# ou .\manage_views.ps1 -Action create  # Si Windows
+```
 
-   # Grafana
-   GF_SECURITY_ADMIN_USER=admin
-   GF_SECURITY_ADMIN_PASSWORD=votre_mot_de_passe_admin
-   ```
+**Note** : L'infrastructure est accessible sur le réseau local via l'IP du Raspberry Pi.
 
-4. **Démarrez l'infrastructure** :
-   ```bash
-   docker-compose up -d
-   ```
+### Configuration minimale (.env)
 
-5. **Créez les vues** (première fois uniquement) :
-   ```powershell
-   .\manage_views.ps1 -Action create
-   ```
+```bash
+# Base de données
+PG_USER=postgres
+PG_PASSWORD=VotreMotDePasseSecurise123!
+PG_DATABASE=datayoti_db
+
+# MQTT
+MQTT_USER=datayoti_monitor
+MQTT_PASSWORD=VotreMotDePasseMQTT123!
+
+# Grafana
+GF_SECURITY_ADMIN_USER=admin
+GF_SECURITY_ADMIN_PASSWORD=VotreMotDePasseGrafana123!
+```
 
 ### Vérification
 
 ```bash
-# Vérifier les conteneurs
+# Statut des services
 docker-compose ps
 
 # Logs de l'ingestor
 docker-compose logs -f ingestor
 
-# Se connecter à la base de données
+# Test connexion DB
 docker exec -it timescale_db psql -U postgres -d datayoti_db
 ```
+
+---
 
 ## 📊 Utilisation
 
@@ -140,154 +161,208 @@ docker exec -it timescale_db psql -U postgres -d datayoti_db
 
 | Service | Port | Usage |
 |---------|------|-------|
-| Mosquitto | 1883 | MQTT standard |
-| Mosquitto | 8883 | MQTT over TLS |
-| Mosquitto | 9001 | MQTT WebSockets |
-| TimescaleDB | 5432 | PostgreSQL |
-| Grafana | 3000 | Interface web |
-
-### Configuration des capteurs ESP32
-
-Les capteurs doivent publier sur les topics :
-```
-datayoti/sensor/{MAC_ADDRESS}/data
-datayoti/sensor/{MAC_ADDRESS}/heartbeat
-```
-
-Exemple de configuration pour ESP32 :
-```cpp
-const char* mqtt_server = "votre_ip_raspberry";
-const int mqtt_port = 1883;
-const char* mqtt_user = "datayoti_monitor";
-const char* mqtt_password = "votre_mot_de_passe";
-```
+| **Mosquitto** | 1883 | MQTT standard |
+| **TimescaleDB** | 5432 | PostgreSQL |
+| **Grafana** | 3000 | Interface web |
 
 ### Accès Grafana
 
-1. Ouvrez http://localhost:3000
-2. Connectez-vous avec les identifiants définis dans `.env`
-3. Configurez la source de données PostgreSQL :
+1. Ouvrir **http://<IP_RASPBERRY_PI>:3000** depuis n'importe quel appareil sur le réseau local
+2. Se connecter avec les identifiants `.env`
+3. Configurer la source de données PostgreSQL :
    - Host : `postgres:5432`
    - Database : `datayoti_db`
    - User : `grafana_reader`
-   - Password : Celui défini dans `GRAFANA_READER_PASSWORD`
+   - Password : Depuis `GRAFANA_READER_PASSWORD`
+
+**Astuce** : Trouvez l'IP du Raspberry Pi avec `hostname -I`
 
 ### Gestion des vues
 
-Le script `manage_views.ps1` permet de gérer les vues matérialisées :
+```bash
+# Sur Raspberry Pi (Linux/Bash)
+./manage_views.sh create
+./manage_views.sh recreate
+./manage_views.sh drop
 
-```powershell
-# Créer toutes les vues
+# Windows PowerShell (si applicable)
 .\manage_views.ps1 -Action create
-
-# Recréer les vues (suppression + création)
 .\manage_views.ps1 -Action recreate
-
-# Supprimer toutes les vues
 .\manage_views.ps1 -Action drop
 ```
+
+### Requêtes utiles
+
+```sql
+-- Dernières mesures de tous les capteurs
+SELECT * FROM latest_sensor_readings;
+
+-- Statut santé des capteurs
+SELECT * FROM device_health;
+
+-- Statistiques horaires des dernières 24h
+SELECT * FROM sensor_data_hourly 
+WHERE bucket_start > NOW() - INTERVAL '24 hours'
+ORDER BY bucket_start DESC;
+```
+
+---
 
 ## 🔐 Sécurité
 
 ### Approche multi-couches
 
-1. **Isolation réseau** : Tous les services communiquent via le réseau Docker `mqtt-network`
+1. **Isolation réseau** : Services dans le réseau Docker `mqtt-network`
 2. **Authentification MQTT** : Obligatoire pour tous les clients
 3. **Utilisateurs DB dédiés** :
-   - `mqtt_ingestor` : Droits d'écriture limités
+   - `mqtt_ingestor` : Droits écriture limités
    - `grafana_reader` : Lecture seule
-4. **Variables d'environnement** : Mots de passe stockés dans `.env` (non versionné)
-5. **Mots de passe temporaires** : Remplacés automatiquement au démarrage
+4. **Variables d'environnement** : Mots de passe dans `.env` (non versionné)
 
 ### Bonnes pratiques
 
-- ⚠️ **Ne jamais commiter le fichier `.env`**
-- 🔒 Utilisez des mots de passe forts (20+ caractères)
-- 🔄 Changez les mots de passe par défaut
-- 🚫 N'exposez pas les ports publiquement sans TLS
-- 📝 Consultez les logs régulièrement
+- ⚠️ **Ne jamais commiter `.env`**
+- 🔒 Mots de passe forts (20+ caractères)
+- 🔄 Changer les mots de passe par défaut
+- 🚫 Ne pas exposer les ports sans TLS en production
+- 📝 Consulter les logs régulièrement
+
+---
 
 ## 🛠️ Maintenance
 
-### Commandes utiles
+### Commandes essentielles
 
 ```bash
-# Arrêter tous les services
+# Arrêter les services
 docker-compose down
-
-# Arrêter et supprimer les volumes (⚠️ perte de données)
-docker-compose down -v
 
 # Redémarrer un service
 docker-compose restart ingestor
 
-# Voir les logs en temps réel
+# Logs en temps réel
 docker-compose logs -f
 
-# Backup de la base de données
+# Backup base de données
 docker exec timescale_db pg_dump -U postgres datayoti_db > backup_$(date +%Y%m%d).sql
+
+# Restaurer depuis backup
+docker exec -i timescale_db psql -U postgres -d datayoti_db < backup_20251103.sql
 ```
 
-### Monitoring
+### Monitoring système
 
 ```sql
--- Dernières mesures
-SELECT * FROM latest_sensor_readings;
+-- Nombre de mesures par device
+SELECT device_id, COUNT(*) as nb_measurements
+FROM sensor_data
+WHERE timestamp > NOW() - INTERVAL '24 hours'
+GROUP BY device_id;
 
--- Statut des capteurs
-SELECT * FROM device_health;
-
--- Statistiques semi-horaires
-SELECT * FROM sensor_data_semi_hourly 
-WHERE bucket_start > NOW() - INTERVAL '24 hours';
+-- Espace disque utilisé
+SELECT 
+    pg_size_pretty(pg_database_size('datayoti_db')) as db_size,
+    pg_size_pretty(pg_total_relation_size('sensor_data')) as sensor_data_size;
 ```
 
-## 📚 Structure du projet
+---
+
+## � Structure du projet
 
 ```
-datayoti-mqtt-broker/
-├── docker-compose.yml          # Orchestration des services
-├── .env                         # Configuration (non versionné)
-├── manage_views.ps1            # Gestion des vues matérialisées
+datayoti-realtime/
+├── docker-compose.yml           # Orchestration services
+├── .env.example                 # Template configuration
+├── manage_views.sh              # Gestion vues (Linux/Raspberry Pi)
+├── manage_views.ps1             # Gestion vues (Windows)
 ├── db/
-│   ├── Dockerfile              # Image TimescaleDB personnalisée
+│   ├── Dockerfile               # Image TimescaleDB
 │   └── init/
-│       ├── 01_init_timescale.sql    # Schéma de la base
-│       ├── 02_update_passwords.sh   # Sécurisation des comptes
-│       └── 03_create_views.sql      # Création des vues
+│       ├── 01_init_timescale.sql     # Schéma DB
+│       ├── 02_update_passwords.sh    # Sécurisation
+│       └── 03_create_views.sql       # Vues matérialisées
 ├── ingestor/
-│   ├── app.py                  # Application d'ingestion
+│   ├── app.py                   # Application Python
 │   ├── Dockerfile
 │   └── requirements.txt
 └── mosquitto/
     ├── config/
-    │   └── mosquitto.conf      # Configuration MQTT
-    ├── data/                    # Persistance MQTT
-    ├── log/                     # Logs MQTT
-    └── passwords/               # Authentification MQTT
+    │   └── mosquitto.conf       # Configuration MQTT
+    ├── data/                    # Persistance
+    ├── log/                     # Logs
+    └── passwords/               # Authentification
 ```
 
-## 🤝 Contribution
+---
 
-Les contributions sont les bienvenues ! 
+## 🐛 Dépannage
 
-1. Forkez le projet
-2. Créez une branche (`git checkout -b feature/amelioration`)
-3. Committez vos changements (`git commit -am 'Ajout d'une fonctionnalité'`)
-4. Pushez vers la branche (`git push origin feature/amelioration`)
-5. Ouvrez une Pull Request
+### Services ne démarrent pas
+
+```bash
+# Vérifier les logs
+docker-compose logs
+
+# Vérifier l'espace disque
+docker system df
+
+# Nettoyer les ressources
+docker system prune -a
+```
+
+### Ingestor ne reçoit pas de messages
+
+- Vérifier que Mosquitto fonctionne : `docker-compose logs mosquitto`
+- Tester avec : `mosquitto_sub -h localhost -t datayoti/# -v -u datayoti_monitor -P <password>`
+- Vérifier les credentials MQTT dans `.env`
+- Vérifier que les capteurs ESP32 pointent vers l'IP correcte du Raspberry Pi
+
+### Grafana ne se connecte pas à la DB
+
+- Vérifier que TimescaleDB fonctionne : `docker-compose ps`
+- Tester la connexion : `docker exec timescale_db pg_isready`
+- Vérifier le user `grafana_reader` et ses droits
+
+### Performance Raspberry Pi
+
+```bash
+# Vérifier l'utilisation des ressources
+docker stats
+
+# Vérifier la température du CPU
+vcgencmd measure_temp
+
+# Libérer de l'espace
+docker system prune -a
+```
+
+---
+
+## 📚 Ressources
+
+- 📖 [Documentation TimescaleDB](https://docs.timescale.com/)
+- 📖 [Documentation Mosquitto](https://mosquitto.org/documentation/)
+- 📖 [Documentation Grafana](https://grafana.com/docs/)
+- � [Docker sur Raspberry Pi](https://docs.docker.com/engine/install/raspberry-pi-os/)
+- �🔗 [Firmware ESP32](../datayoti-firmware) - Capteurs IoT
+- 🔗 [Data Warehouse](../datayoti-warehouse) - Plateforme d'analyse
+
+---
 
 ## 📄 Licence
 
-Ce projet est distribué sous licence MIT. Voir le fichier `LICENSE` pour plus de détails.
+Ce projet est sous licence MIT. Voir [LICENSE](LICENSE) pour plus de détails.
 
-## 🐛 Support
+---
 
-- **Issues** : https://github.com/medkan01/datayoti-mqtt-broker/issues
-- **Discussions** : https://github.com/medkan01/datayoti-mqtt-broker/discussions
+## 👨‍� Contact
 
-## 🙏 Remerciements
+- **LinkedIn** : [Mehdi Akniou](https://linkedin.com/in/mehdi-akniou)
+- **Email** : contact@mehdi-akniou.com
+- **GitHub** : [@medkan01](https://github.com/medkan01)
 
-- TimescaleDB pour l'extension PostgreSQL
-- Eclipse Foundation pour Mosquitto
-- Grafana Labs pour l'outil de visualisation
+---
+
+**DataYoti Realtime** - Du signal à l'action 💾
+
+*Infrastructure de monitoring temps réel optimisée pour Raspberry Pi*
